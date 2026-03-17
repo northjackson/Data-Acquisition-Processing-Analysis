@@ -8,6 +8,8 @@ import pandas as pd
 import pyproj
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import certifi
+from dataretrieval import nwis
 pd.options.mode.chained_assignment = None
 
 def getSNOTELData(SiteName, SiteID, StateAbb, StartDate, EndDate, OutputFolder):
@@ -53,10 +55,41 @@ def getCaliSNOTELData(SiteName, SiteID, StartDate, EndDate, OutputFolder):
     url = url1+url2+url3+url4
     print(f'Start retrieving data for {SiteName}, {SiteID}')
     print(url)
+    
+    # Define custom headers
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/csv,text/plain,application/csv',
+        'Connection': 'keep-alive'
+    }
 
-    http = urllib3.PoolManager()
-    response = http.request('GET', url)
+    # Add a timeout and retry strategy
+    # connect=2.0 (wait 2s to connect), read=10.0 (wait 10s for data)
+    timeout = urllib3.Timeout(connect=2.0, read=10.0)
+    retries = urllib3.Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+
+    http = urllib3.PoolManager(
+        headers=headers, 
+        timeout=timeout, 
+        retries=retries,
+        block=False  # Prevents the pool from blocking if multiple requests overlap
+    )
+    
+    try:
+        # Set a short 10-second timeout
+        response = http.request('GET', url, timeout=10.0)
+        print(f"Status: {response.status}")
+    except urllib3.exceptions.MaxRetryError:
+        print("Error: The HPC network cannot reach the USDA server (Check Proxy).")
+    except urllib3.exceptions.TimeoutError:
+        print("Error: The request timed out (The server or firewall is not responding).")
+
+    #http = urllib3.PoolManager(headers={'User-Agent': 'SNOTEL-Data-Retrieval-Agent'})
+    # print('urllib3 PoolManager created')
+    # response = http.request('GET', url)
+    # print('Data retrieved from URL')
     data = response.data.decode('utf-8')
+    print('Data decoded from bytes to string')
     i=0
     for line in data.split("\n"):
         if line.startswith("#"):
@@ -72,10 +105,7 @@ def getCaliSNOTELData(SiteName, SiteID, StartDate, EndDate, OutputFolder):
     df.reset_index(inplace=True, drop=True)
     df["Date"] = pd.to_datetime(df["Date"])
     df.rename(columns={df.columns[1]:'Snow Water Equivalent (m) Start of Day Values'}, inplace=True)
-    
-    for c in df.columns[1:]:
-        df[c] = pd.to_numeric(df[c], errors="coerce") * 0.0254
-    
+    df.iloc[:, 1:] = df.iloc[:, 1:].apply(lambda x: pd.to_numeric(x) * 0.0254)  # convert in to m
     df['Water_Year'] = pd.to_datetime(df['Date']).map(lambda x: x.year+1 if x.month>9 else x.year)
 
     df.to_csv(f'./{OutputFolder}/df_{SiteID}_{StateAbb}_SNTL.csv', index=False)
@@ -173,6 +203,40 @@ def combine(snotel_files, nwm_files, StartDate, EndDate):
 
     return combined_df
 
+def get_usgs_streamflow(site_id, start_date, end_date):
+    """
+    Retrieves daily mean streamflow data from USGS NWIS.
+    
+    Parameters:
+    site_id (str): The USGS station ID (e.g., '09380000')
+    start_date (str): Beginning date in 'YYYY-MM-DD' format
+    end_date (str): End date in 'YYYY-MM-DD' format
+    """
+    # Parameter code '00060' refers specifically to Discharge (streamflow) in cfs
+    parameter_code = '00060'
+    
+    print(f"Retrieving data for Site: {site_id} from {start_date} to {end_date}...")
+    
+    try:
+        # get_dv retrieves "Daily Values"
+        # returns a DataFrame and a metadata object
+        df, metadata = nwis.get_dv(
+            sites=site_id, 
+            start=start_date, 
+            end=end_date, 
+            parameterCd=parameter_code
+        )
+        
+        # Clean up the column names for easier use
+        # Usually, the flow data is in a column like '00060_Mean'
+        df.rename(columns={f'{parameter_code}_00003': 'Streamflow_cfs'}, inplace=True)
+        
+        return df
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
 if __name__ == "__main__":
 	SiteName = sys.argv[1]
 	SiteID = sys.argv[2]
@@ -181,4 +245,3 @@ if __name__ == "__main__":
 	EndDate = sys.argv[5]
 	OutputFolder = sys.argv[6]
 	
-	getData(SiteName, SiteID, StateAbb, StartDate, EndDate, OutputFolder)

@@ -11,4 +11,6 @@ dependencies:
   - pygeohydro
   - pynhd
   - pynldas2
-  - python=3.11
+  - python=3.10
+  - pydaymet[version='>=0.13.7']
+  - earthaccess
