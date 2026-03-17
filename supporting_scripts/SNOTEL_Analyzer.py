@@ -4,7 +4,6 @@ import os
 import pandas as pd
 
 
-
 def SNOTELPlots(sitedict, gdf_in_bbox, WY, watershed, AOI, DOI,plot = True):
     
     #get the number of plots to make based on number of sites in the watershed
@@ -79,8 +78,8 @@ def SNOTELPlots(sitedict, gdf_in_bbox, WY, watershed, AOI, DOI,plot = True):
 
  
             
-    fig.legend(handles, labels,loc='lower center',ncol=8, bbox_to_anchor=(.5, -.05))
-    plt.tight_layout()
+if "handles" in locals():
+    fig.legend(handles, labels, loc='lower center', ncol=8, bbox_to_anchor=(.5, -.05))
 
     if plot == True:
         if not os.path.exists('Figures'):
